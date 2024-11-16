@@ -3,8 +3,39 @@ import { ArrowDown, X } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { TreeNodeType, EdgeType, TreeState } from '@/types/tree';
+// import { TreeNodeType, EdgeType, TreeState } from '@/types/tree';
 
+
+interface TreeNodeType {
+  id: number;
+  label: string;
+  x: number;
+  y: number;
+  isLeaf: boolean;
+  pos?: string;
+  projectedParent?: number | null;
+}
+
+interface EdgeControlPoint {
+  x: number;
+  y: number;
+}
+
+interface EdgeType {
+  id: string;
+  from: number;
+  to: number;
+  controlPoint?: EdgeControlPoint;   // Add this to your type
+}
+interface TreeState {
+  sentence: string;
+  nodes: TreeNodeType[];
+  edges: EdgeType[];
+  nextId: number;
+  selected: number[];
+  error: string;
+  linking: number | null;
+}
 // Separate projecting and non-projecting POS types
 const PROJECTING_POS = { N: 'NP', V: 'VP', A: 'AP', P: 'PP', Adv: 'AdvP' };
 const NON_PROJECTING_POS = ['aux', 'Det'];
@@ -14,23 +45,72 @@ interface TreeNodeProps {
   node: TreeNodeType;
   selected: boolean;
   isLinking: boolean;
+  dimensions: { width: number; height: number };
+  totalLeafNodes: number; 
   onSelect: () => void;
   onUpdate: (node: TreeNodeType) => void;
   onLink: (id: number) => void;
 }
 
-const TreeNode: React.FC<TreeNodeProps> = ({ node, selected, isLinking, onSelect, onUpdate, onLink }) => {
+const TreeNode: React.FC<TreeNodeProps> = ({ node, selected, isLinking, dimensions, totalLeafNodes, onSelect, onUpdate, onLink }) => {
   const textRef = useRef<HTMLInputElement>(null);
-  const [width, setWidth] = useState(node.isLeaf ? 80 : 40);
+  // const [width, setWidth] = useState(node.isLeaf ? 80 : 40);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  
+  const handleDragStart = (e: React.MouseEvent) => {
+    if (isLinking) return; // Don't start drag if we're in linking mode
+    setIsDragging(true);
+    setDragStart({ 
+      x: e.clientX - node.x, 
+      y: e.clientY - node.y 
+    });
+  };
+
+  const handleDrag = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+    e.preventDefault();
+    onUpdate({
+      ...node,
+      x: e.clientX - dragStart.x,
+      y: e.clientY - dragStart.y
+    });
+  };
+
+  const handleDragEnd = () => {
+    setIsDragging(false);
+  };
+
+  useEffect(() => {
+    if (isDragging) {
+      window.addEventListener('mousemove', handleDrag as any);
+      window.addEventListener('mouseup', handleDragEnd);
+      return () => {
+        window.removeEventListener('mousemove', handleDrag as any);
+        window.removeEventListener('mouseup', handleDragEnd);
+      };
+    }
+  }, [isDragging]);
+  // Calculate spacing between nodes
+  const spacing = dimensions.width / (totalLeafNodes + 1);
+  // Make box width smaller than spacing to prevent overlap
+  const baseWidth = spacing * 0.8;  // Use 80% of available space
+  
+  // Calculate dynamic font size based on available width
+  const fontSize = Math.min(14, Math.max(11, Math.floor(baseWidth / 10))); // between 11px and 14px
+  
+  const [width, setWidth] = useState(node.isLeaf ? baseWidth : baseWidth * 0.6);
   
   useEffect(() => {
     if (textRef.current) {
-      setWidth(Math.max(node.isLeaf ? 80 : 40, textRef.current.scrollWidth + 20));
+      const minWidth = node.isLeaf ? baseWidth : baseWidth * 0.6;
+      // Add padding proportional to the base width
+      setWidth(Math.max(minWidth, textRef.current.scrollWidth + (baseWidth * 0.1)));
     }
-  }, [node.label, node.isLeaf]);
+  }, [node.label, node.isLeaf, baseWidth]);
 
   return (
-    <g transform={`translate(${node.x},${node.y})`} className="cursor-pointer" onClick={isLinking ? onLink.bind(null, node.id) : onSelect}>
+    <g transform={`translate(${node.x},${node.y})`} className="cursor-move" onClick={isLinking ? onLink.bind(null, node.id) : onSelect} onMouseDown={handleDragStart}>
       <rect
         x={-width/2} y="-12"
         width={width} height="24"
@@ -44,7 +124,8 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, selected, isLinking, onSelect
             ref={textRef}
             value={node.label}
             onChange={e => onUpdate({ ...node, label: e.target.value })}
-            className="w-full h-5 text-center bg-transparent border-none text-xs font-medium p-0"
+            style={{ fontSize: `${fontSize}px` }}  // Dynamic font size
+            className="w-full h-5 text-center bg-transparent border-none font-medium p-0"
             onClick={e => e.stopPropagation()}
           />
         </div>
@@ -54,7 +135,8 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, selected, isLinking, onSelect
           <select
             value={node.pos || ''}
             onChange={e => onUpdate({ ...node, pos: e.target.value })}
-            className="w-full h-6 text-xs border rounded"
+            style={{ fontSize: `${fontSize}px` }}  // Match font size for POS selector
+            className="w-full h-6 border rounded"
           >
             <option value="">POS</option>
             {[...NON_PROJECTING_POS, ...Object.keys(PROJECTING_POS)].map(p => (
@@ -72,23 +154,91 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, selected, isLinking, onSelect
     </g>
   );
 };
-
 interface EdgeProps {
   from: TreeNodeType;
   to: TreeNodeType;
+  edge: EdgeType; 
+  onUpdate: (edge: EdgeType) => void; 
   onDelete: () => void;
 }
 
-const Edge: React.FC<EdgeProps> = ({ from, to, onDelete }) => {
+const Edge: React.FC<EdgeProps> = ({ from, to, edge, onDelete, onUpdate }) => {
   const [isHovered, setIsHovered] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const svgRef = useRef<SVGGElement>(null);
+
+  // Default control point is midway between start and end
+  const defaultControlPoint: EdgeControlPoint = {
+    x: (from.x + to.x) / 2,
+    y: (from.y + to.y) / 2
+  };
+
+  const controlPoint = edge.controlPoint || defaultControlPoint;
+
+  const handleControlPointDragStart = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleControlPointDrag = (e: MouseEvent) => {
+    if (!isDragging) return;
+    
+    const svgElement = svgRef.current?.closest('svg');
+    if (!svgElement) return;
+    
+    const svgRect = svgElement.getBoundingClientRect();
+    const newControlPoint = {
+      x: e.clientX - svgRect.left,
+      y: e.clientY - svgRect.top
+    };
+    
+    onUpdate({ ...edge, controlPoint: newControlPoint });
+  };
+
+  const handleControlPointDragEnd = () => {
+    setIsDragging(false);
+  };
+
+  useEffect(() => {
+    if (isDragging) {
+      window.addEventListener('mousemove', handleControlPointDrag);
+      window.addEventListener('mouseup', handleControlPointDragEnd);
+      return () => {
+        window.removeEventListener('mousemove', handleControlPointDrag);
+        window.removeEventListener('mouseup', handleControlPointDragEnd);
+      };
+    }
+  }, [isDragging]);
+
+  // Create quadratic curve path
+  const pathD = `M ${from.x},${from.y + 10} ` +
+                `Q ${controlPoint.x},${controlPoint.y} ` +
+                `${to.x},${to.y - 10}`;
+
   return (
-    <g onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
-      <line x1={from.x} y1={from.y + 10} x2={to.x} y2={to.y - 10} stroke="black" strokeWidth="1.5" />
+    <g ref={svgRef} onMouseEnter={() => setIsHovered(true)} onMouseLeave={() => setIsHovered(false)}>
+      <path 
+        d={pathD} 
+        stroke="black" 
+        strokeWidth="1.5" 
+        fill="none" 
+      />
       {isHovered && (
-        <g transform={`translate(${(from.x + to.x)/2},${(from.y + to.y)/2})`} onClick={onDelete}>
-          <circle r="8" fill="white" stroke="red" strokeWidth="2" className="cursor-pointer" />
-          <X size={10} className="transform translate-x-[-5px] translate-y-[-5px] cursor-pointer" />
-        </g>
+        <>
+          {/* Single draggable control point */}
+          <g 
+            transform={`translate(${controlPoint.x},${controlPoint.y})`}
+            onMouseDown={handleControlPointDragStart}
+            className="cursor-move"
+          >
+            <circle r="4" fill="blue" stroke="white" strokeWidth="2" />
+          </g>
+          {/* Delete button */}
+          <g transform={`translate(${(from.x + to.x)/2},${(from.y + to.y)/2})`} onClick={onDelete}>
+            <circle r="8" fill="white" stroke="red" strokeWidth="2" className="cursor-pointer" />
+            <X size={10} className="transform translate-x-[-5px] translate-y-[-5px] cursor-pointer" />
+          </g>
+        </>
       )}
     </g>
   );
@@ -111,7 +261,11 @@ const Editor: React.FC = () => {
     const updateDimensions = () => {
       if (containerRef.current) {
         const { width } = containerRef.current.getBoundingClientRect();
-        setDimensions({ width: Math.max(600, width - 32), height: Math.max(400, width * 0.6) });
+        // Make height proportional to width but taller
+        setDimensions({ 
+          width: Math.max(600, width - 32), 
+          height: Math.max(800, width * 0.8) // Increased from 0.6 to 0.8 or higher
+        });
       }
     };
     updateDimensions();
@@ -119,47 +273,79 @@ const Editor: React.FC = () => {
     return () => window.removeEventListener('resize', updateDimensions);
   }, []);
 
-  const updatePositions = () => {
-    const getChildren = (id: number) => 
-      state.edges.filter(e => e.from === id).map(e => state.nodes.find(n => n.id === e.to)!);
-    const getParent = (id: number) => 
-      state.nodes.find(n => n.id === state.edges.find(e => e.to === id)?.from);
+  useEffect(() => {
+    // const getChildren = (id: number) => 
+    //   state.edges.filter(e => e.from === id).map(e => state.nodes.find(n => n.id === e.to)!);
+    // const getParent = (id: number) => 
+    //   state.nodes.find(n => n.id === state.edges.find(e => e.to === id)?.from);
     
-    const TOP_Y = dimensions.height * 0.125;
-    const BOTTOM_Y = dimensions.height * 0.875;
-    const ROOT_X = dimensions.width / 2;
-
-    setState(prev => {
-      let nodes = [...prev.nodes];
-      nodes = nodes.map(node => {
-        const children = getChildren(node.id);
-        const parent = getParent(node.id);
-        
-        let x = node.x;
-        let y = node.y;
-
-        if (node.isLeaf) {
-          const leafNodes = nodes.filter(n => n.isLeaf);
-          const index = leafNodes.findIndex(n => n.id === node.id);
-          const spacing = dimensions.width / (leafNodes.length + 1);
-          x = spacing * (index + 1);
-          y = BOTTOM_Y;
-        } else if (node.label === 'S' && !parent) {
-          x = ROOT_X;
-          y = TOP_Y;
-        } else if (children.length) {
-          x = (Math.min(...children.map(n => n.x)) + Math.max(...children.map(n => n.x))) / 2;
-          y = Math.min(...children.map(n => n.y)) - 60;
-        }
-
-        return { ...node, x, y };
+    // const TOP_Y = dimensions.height * 0.125;
+    // const BOTTOM_Y = dimensions.height * 0.875;
+    // const ROOT_X = dimensions.width / 2;
+  
+    const updatePositions = () => {
+      const getChildren = (id: number) => 
+        state.edges.filter(e => e.from === id).map(e => state.nodes.find(n => n.id === e.to)!);
+      const getParent = (id: number) => 
+        state.nodes.find(n => n.id === state.edges.find(e => e.to === id)?.from);
+      
+      // Calculate tree depth to adjust spacing
+      const calculateDepth = (nodeId: number, visited = new Set<number>()): number => {
+        if (visited.has(nodeId)) return 0;
+        visited.add(nodeId);
+        const children = getChildren(nodeId);
+        if (!children.length) return 0;
+        return 1 + Math.max(...children.map(child => calculateDepth(child.id, visited)));
+      };
+  
+      // Find root node (S)
+      const rootNode = state.nodes.find(n => n.label === 'S' && !getParent(n.id));
+      const treeDepth = rootNode ? calculateDepth(rootNode.id) + 1 : 1;
+  
+      // Adjust vertical spacing based on tree depth
+      const VERTICAL_GAP = dimensions.height * 0.1; // Increased from 0.15
+      const TOP_Y = dimensions.height * 0.1;  // Adjust as needed
+      const BOTTOM_Y = dimensions.height * 0.8; // Adjust as needed
+      const ROOT_X = dimensions.width / 2;
+  
+      setState(prev => {
+        let nodes = [...prev.nodes];
+        nodes = nodes.map(node => {
+          const children = getChildren(node.id);
+          const parent = getParent(node.id);
+          
+          let x = node.x;
+          let y = node.y;
+  
+          if (node.isLeaf) {
+            const leafNodes = nodes.filter(n => n.isLeaf);
+            const index = leafNodes.findIndex(n => n.id === node.id);
+            const spacing = dimensions.width / (leafNodes.length + 1);
+            x = spacing * (index + 1);
+            y = BOTTOM_Y;
+          } else if (node.label === 'S' && !parent) {
+            x = ROOT_X;
+            // Position S relative to highest non-S node
+            const highestY = Math.min(...nodes
+              .filter(n => n.id !== node.id)
+              .map(n => n.y));
+            y = Math.min(TOP_Y, highestY - VERTICAL_GAP);
+          } else if (children.length) {
+            x = (Math.min(...children.map(n => n.x)) + Math.max(...children.map(n => n.x))) / 2;
+            y = Math.min(...children.map(n => n.y)) - VERTICAL_GAP;
+          }
+  
+          return { ...node, x, y };
+        });
+  
+        return { ...prev, nodes };
       });
+    };
+  
+    updatePositions();
+  }, [dimensions.width, dimensions.height, state.edges.length]); // Only depend on these specific values
+  
 
-      return { ...prev, nodes };
-    });
-  };
-
-  useEffect(() => { updatePositions(); }, [state.edges, state.nodes, dimensions]);
 
   const initializeNodes = () => {
     if (!state.sentence.trim()) {
@@ -280,6 +466,7 @@ const Editor: React.FC = () => {
       selected: [],
     }));
   };
+  const totalLeafNodes = state.nodes.filter(n => n.isLeaf).length;
 
   return (
     <Card className="w-full">
@@ -301,35 +488,45 @@ const Editor: React.FC = () => {
         </div>
         {state.error && <div className="text-red-500 mb-4 text-sm">{state.error}</div>}
         <div className="border rounded-lg p-4" ref={containerRef}>
-          <svg width={dimensions.width} height={dimensions.height} className="bg-white">
-            {state.edges.map(edge => (
-              <Edge
-                key={edge.id}
-                from={state.nodes.find(n => n.id === edge.from)!}
-                to={state.nodes.find(n => n.id === edge.to)!}
-                onDelete={() => setState(prev => ({
-                  ...prev,
-                  edges: prev.edges.filter(e => e.id !== edge.id)
-                }))}
-              />
-            ))}
-            {state.nodes.map(node => (
-              <TreeNode
-                key={node.id}
-                node={node}
-                selected={state.selected.includes(node.id)}
-                isLinking={state.linking !== null}
-                onSelect={() => setState(prev => ({
-                  ...prev,
-                  selected: prev.selected.includes(node.id)
-                    ? prev.selected.filter(id => id !== node.id)
-                    : [...prev.selected, node.id]
-                }))}
-                onUpdate={handleNodeUpdate}
-                onLink={handleLink}
-              />
-            ))}
-          </svg>
+          <svg width={dimensions.width} height={dimensions.height} className="bg-white"
+              viewBox={`0 0 ${dimensions.width} ${dimensions.height}`} 
+              preserveAspectRatio="xMidYMid meet" 
+          >
+          {state.edges.map(edge => (
+            <Edge
+              key={edge.id}
+              edge={edge}  // Add this
+              from={state.nodes.find(n => n.id === edge.from)!}
+              to={state.nodes.find(n => n.id === edge.to)!}
+              onDelete={() => setState(prev => ({
+                ...prev,
+                edges: prev.edges.filter(e => e.id !== edge.id)
+              }))}
+              onUpdate={(updatedEdge) => setState(prev => ({
+                ...prev,
+                edges: prev.edges.map(e => e.id === updatedEdge.id ? updatedEdge : e)
+              }))}
+            />
+          ))}
+        {state.nodes.map(node => (
+          <TreeNode
+            key={node.id}
+            node={node}
+            dimensions={dimensions}
+            totalLeafNodes={totalLeafNodes}  // Add this
+            selected={state.selected.includes(node.id)}
+            isLinking={state.linking !== null}
+            onSelect={() => setState(prev => ({
+              ...prev,
+              selected: prev.selected.includes(node.id)
+                ? prev.selected.filter(id => id !== node.id)
+                : [...prev.selected, node.id]
+            }))}
+            onUpdate={handleNodeUpdate}
+            onLink={handleLink}
+          />
+        ))}
+      </svg>
         </div>
       </CardContent>
     </Card>

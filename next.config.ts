@@ -2,11 +2,18 @@ import type { NextConfig } from "next";
 
 const nextConfig = {
   output: 'export',  // Enable static exports
-  basePath: '/sentence_trees',  // Add this for GitHub Pages
+  basePath: process.env.NODE_ENV === 'production' ? '/sentence_trees' : '',
+  assetPrefix: process.env.NODE_ENV === 'production' ? '/sentence_trees/' : '',
+
 	images: {
     unoptimized: true,
   },
-  assetPrefix: '/sentence_trees/',	
+  webpack: (config) => {
+    if (process.env.NODE_ENV === 'production') {
+      config.output.publicPath = '/sentence_trees/_next/';
+    }
+    return config;
+  },
   trailingSlash: true ,
 }
 
