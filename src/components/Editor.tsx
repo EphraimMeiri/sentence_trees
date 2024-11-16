@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { ArrowDown, X } from 'lucide-react';
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
@@ -6,7 +5,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { TreeNodeType, EdgeType, TreeState } from '@/types/tree';
 
-const POS_TYPES = { N: 'NP', V: 'VP', A: 'AP', P: 'PP', Adv: 'AdvP', aux: '', Det: '' };
+// Separate projecting and non-projecting POS types
+const PROJECTING_POS = { N: 'NP', V: 'VP', A: 'AP', P: 'PP', Adv: 'AdvP' };
+const NON_PROJECTING_POS = ['aux', 'Det'];
+const POS_TYPES = { ...PROJECTING_POS, aux: '', Det: '' };
 
 interface TreeNodeProps {
   node: TreeNodeType;
@@ -28,7 +30,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, selected, isLinking, onSelect
   }, [node.label, node.isLeaf]);
 
   return (
-    <g transform={`translate(${node.x},${node.y})`} className="cursor-pointer" onClick={onSelect}>
+    <g transform={`translate(${node.x},${node.y})`} className="cursor-pointer" onClick={isLinking ? onLink.bind(null, node.id) : onSelect}>
       <rect
         x={-width/2} y="-12"
         width={width} height="24"
@@ -55,7 +57,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, selected, isLinking, onSelect
             className="w-full h-6 text-xs border rounded"
           >
             <option value="">POS</option>
-            {Object.keys(POS_TYPES).map(p => (
+            {[...NON_PROJECTING_POS, ...Object.keys(PROJECTING_POS)].map(p => (
               <option key={p} value={p}>{p}</option>
             ))}
           </select>
@@ -175,6 +177,7 @@ const Editor: React.FC = () => {
         x: spacing * (i + 1),
         y: dimensions.height * 0.875,
         isLeaf: true,
+        projectedParent: null,
       })),
       { 
         id: words.length + 1,
@@ -195,18 +198,62 @@ const Editor: React.FC = () => {
     }));
   };
 
+  const handleNodeUpdate = (updatedNode: TreeNodeType) => {
+    setState(prev => {
+      let newState = { ...prev };
+      const oldNode = prev.nodes.find(n => n.id === updatedNode.id)!;
+      
+      // Handle POS changes for leaf nodes
+      if (updatedNode.isLeaf && oldNode.pos !== updatedNode.pos) {
+        // Remove old projection if it exists
+        if (oldNode.projectedParent) {
+          newState.nodes = newState.nodes.filter(n => n.id !== oldNode.projectedParent);
+          newState.edges = newState.edges.filter(e => e.from !== oldNode.projectedParent);
+        }
+
+        // Add new projection if needed
+        if (PROJECTING_POS[updatedNode.pos as keyof typeof PROJECTING_POS]) {
+          const projectedParent = {
+            id: prev.nextId,
+            label: PROJECTING_POS[updatedNode.pos as keyof typeof PROJECTING_POS],
+            x: updatedNode.x,
+            y: updatedNode.y - 60,
+            isLeaf: false,
+          };
+
+          newState.nodes = [...newState.nodes, projectedParent];
+          newState.edges = [...newState.edges, {
+            id: `${prev.nextId}-${updatedNode.id}`,
+            from: prev.nextId,
+            to: updatedNode.id
+          }];
+          updatedNode.projectedParent = prev.nextId;
+          newState.nextId = prev.nextId + 1;
+        }
+      }
+
+      // Update the node itself
+      newState.nodes = newState.nodes.map(n => 
+        n.id === updatedNode.id ? updatedNode : n
+      );
+
+      return newState;
+    });
+  };
+
   const handleLink = (fromId: number) => {
     if (state.linking === fromId) {
       setState(prev => ({ ...prev, linking: null }));
     } else if (state.linking !== null) {
-      setState(prev => {
-        const newEdge = { id: `${state.linking}-${fromId}`, from: state.linking, to: fromId };
-        return {
-          ...prev,
-          edges: [...prev.edges, newEdge],
-          linking: null,
-        };
-      });
+      setState(prev => ({
+        ...prev,
+        edges: [...prev.edges, { 
+          id: `${prev.linking}-${fromId}`, 
+          from: prev.linking!, 
+          to: fromId 
+        }],
+        linking: null,
+      }));
     } else {
       setState(prev => ({ ...prev, linking: fromId }));
     }
@@ -278,10 +325,7 @@ const Editor: React.FC = () => {
                     ? prev.selected.filter(id => id !== node.id)
                     : [...prev.selected, node.id]
                 }))}
-                onUpdate={updatedNode => setState(prev => ({
-                  ...prev,
-                  nodes: prev.nodes.map(n => n.id === updatedNode.id ? updatedNode : n)
-                }))}
+                onUpdate={handleNodeUpdate}
                 onLink={handleLink}
               />
             ))}
