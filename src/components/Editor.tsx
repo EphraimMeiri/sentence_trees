@@ -38,7 +38,7 @@ interface TreeState {
 }
 // Separate projecting and non-projecting POS types
 const PROJECTING_POS = { N: 'NP', V: 'VP', A: 'AP', P: 'PP', Adv: 'AdvP' };
-const NON_PROJECTING_POS = ['aux', 'Det'];
+const NON_PROJECTING_POS = ['aux', 'Det','PNP'];
 const POS_TYPES = { ...PROJECTING_POS, aux: '', Det: '' };
 
 interface TreeNodeProps {
