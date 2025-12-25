@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 
-const nextConfig = {
+const nextConfig: NextConfig = {
   output: 'export',  // Enable static exports
   basePath: process.env.NODE_ENV === 'production' ? '/sentence_trees' : '',
   assetPrefix: process.env.NODE_ENV === 'production' ? '/sentence_trees/' : '',
@@ -8,7 +8,7 @@ const nextConfig = {
 	images: {
     unoptimized: true,
   },
-  webpack: (config) => {
+  webpack: (config: any) => {
     if (process.env.NODE_ENV === 'production') {
       config.output.publicPath = '/sentence_trees/_next/';
     }

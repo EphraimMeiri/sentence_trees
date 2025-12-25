@@ -39,7 +39,6 @@ interface TreeState {
 // Separate projecting and non-projecting POS types
 const PROJECTING_POS = { N: 'NP', V: 'VP', A: 'AP', P: 'PP', Adv: 'AdvP' };
 const NON_PROJECTING_POS = ['aux', 'Det','PNP'];
-const POS_TYPES = { ...PROJECTING_POS, aux: '', Det: '' };
 
 interface TreeNodeProps {
   node: TreeNodeType;
@@ -83,14 +82,15 @@ const TreeNode: React.FC<TreeNodeProps> = ({ node, selected, isLinking, dimensio
 
   useEffect(() => {
     if (isDragging) {
-      window.addEventListener('mousemove', handleDrag as any);
+      const dragHandler = (e: Event) => handleDrag(e as unknown as React.MouseEvent);
+      window.addEventListener('mousemove', dragHandler);
       window.addEventListener('mouseup', handleDragEnd);
       return () => {
-        window.removeEventListener('mousemove', handleDrag as any);
+        window.removeEventListener('mousemove', dragHandler);
         window.removeEventListener('mouseup', handleDragEnd);
       };
     }
-  }, [isDragging]);
+  }, [isDragging, handleDrag]);
   // Calculate spacing between nodes
   const spacing = dimensions.width / (totalLeafNodes + 1);
   // Make box width smaller than spacing to prevent overlap
@@ -208,7 +208,7 @@ const Edge: React.FC<EdgeProps> = ({ from, to, edge, onDelete, onUpdate }) => {
         window.removeEventListener('mouseup', handleControlPointDragEnd);
       };
     }
-  }, [isDragging]);
+  }, [isDragging, handleControlPointDrag]);
 
   // Create quadratic curve path
   const pathD = `M ${from.x},${from.y + 10} ` +
@@ -300,8 +300,11 @@ const Editor: React.FC = () => {
   
       // Find root node (S)
       const rootNode = state.nodes.find(n => n.label === 'S' && !getParent(n.id));
-      const treeDepth = rootNode ? calculateDepth(rootNode.id) + 1 : 1;
-  
+      // Calculate tree depth for potential future use
+      if (rootNode) {
+        calculateDepth(rootNode.id);
+      }
+
       // Adjust vertical spacing based on tree depth
       const VERTICAL_GAP = dimensions.height * 0.1; // Increased from 0.15
       const TOP_Y = dimensions.height * 0.1;  // Adjust as needed
@@ -343,7 +346,7 @@ const Editor: React.FC = () => {
     };
   
     updatePositions();
-  }, [dimensions.width, dimensions.height, state.edges.length]); // Only depend on these specific values
+  }, [dimensions.width, dimensions.height, state.edges, state.nodes]); // Only depend on these specific values
   
 
 
@@ -386,7 +389,7 @@ const Editor: React.FC = () => {
 
   const handleNodeUpdate = (updatedNode: TreeNodeType) => {
     setState(prev => {
-      let newState = { ...prev };
+      const newState = { ...prev };
       const oldNode = prev.nodes.find(n => n.id === updatedNode.id)!;
       
       // Handle POS changes for leaf nodes
